@@ -3,27 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Pano Viewer</title>
+  <title>Pannellum 360 Viewer</title>
 
-  <!-- Pannellum (used for true 360 equirectangular images) -->
+  <!-- Pannellum -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"/>
   <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; background: #000; }
+    html, body { height: 100%; margin: 0; background: #000; color: #eaeaea; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     #panorama { width: 100%; height: 100%; pointer-events: auto; touch-action: manipulation; }
     #overlay {
       position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-      color: #ddd; font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: rgba(0,0,0,0.75); text-align: center; padding: 24px;
+      background: rgba(0,0,0,0.78); z-index: 10; text-align: center; padding: 24px;
     }
     #list {
-      position: absolute; inset: 0; overflow: auto; display: none; background: #111; color: #eee; padding: 16px 20px;
-      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      position: absolute; inset: 0; overflow: auto; display: none; padding: 20px;
     }
+    #list h2 { margin: 0 0 10px; }
     #list a { color: #7cc6ff; text-decoration: none; }
     #list a:hover { text-decoration: underline; }
-    .hint { opacity: 0.8; font-size: 13px; margin-top: 8px; }
+    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 6px; }
   </style>
 </head>
 <body>
@@ -34,12 +33,12 @@
   <script>
     const manifestUrl = 'manifest.json';
 
-    // Query helpers
+    // --- Query helpers ---
     const Q = new URLSearchParams(location.search);
     const qs = (k, d=null) => Q.has(k) ? Q.get(k) : d;
     const num = (k, d) => (Q.has(k) && Number.isFinite(Number(Q.get(k)))) ? Number(Q.get(k)) : d;
 
-    // Convert Dropbox share links to direct raw URLs for embedding
+    // --- Dropbox share -> raw URL ---
     function toDropboxRaw(url) {
       try {
         const u = new URL(url);
@@ -48,14 +47,11 @@
         u.searchParams.set('raw', '1');
         u.hostname = 'dl.dropboxusercontent.com';
         return u.toString();
-      } catch {
-        return url;
-      }
+      } catch { return url; }
     }
     function normalizeSrc(src) {
       if (!src) return src;
-      if (src.includes('dropbox.com')) return toDropboxRaw(src);
-      return src;
+      return src.includes('dropbox.com') ? toDropboxRaw(src) : src;
     }
 
     function showOverlay(msg) {
@@ -73,22 +69,7 @@
       return res.json();
     }
 
-    // Flat image renderer for non-360 assets
-    function renderFlatImage(src) {
-      const pano = document.getElementById('panorama');
-      pano.innerHTML = '';
-      const img = document.createElement('img');
-      img.src = src;
-      img.alt = 'Image';
-      img.style.maxWidth = '100%';
-      img.style.maxHeight = '100%';
-      img.style.objectFit = 'contain';
-      img.style.display = 'block';
-      img.style.margin = '0 auto';
-      pano.appendChild(img);
-    }
-
-    function buildPannellumConfig(src, defaults = {}) {
+    function buildViewerConfig(src, defaults = {}) {
       return {
         type: 'equirectangular',
         panorama: src,
@@ -104,8 +85,9 @@
 
     function startViewer(cfg, autorotate) {
       const viewer = pannellum.viewer('panorama', cfg);
-      if (autorotate !== null && autorotate !== undefined && autorotate !== '' && !Number.isNaN(Number(autorotate)) && Number(autorotate) !== 0) {
-        viewer.startAutoRotate(Number(autorotate));
+      const ar = autorotate ?? null;
+      if (ar !== null && ar !== undefined && ar !== '' && !Number.isNaN(Number(ar)) && Number(ar) !== 0) {
+        viewer.startAutoRotate(Number(ar));
       }
       return viewer;
     }
@@ -115,17 +97,21 @@
       list.style.display = 'block';
       const ids = Object.keys(manifest).sort();
       list.innerHTML = ids.length
-        ? `<h2>Available items</h2>
-           <p>Click an entry to open it. Embed with <code>?id=Plot1_map</code> in Experience Builder.</p>
-           <ul>${ids.map(id => `<li><a href="?id=${encodeURIComponent(id)}">${id}</a></li>`).join('')}</ul>
-           <p class="hint">Overrides: <code>pitch</code>, <code>yaw</code>, <code>hfov</code>, <code>autorotate</code>, <code>autoLoad</code>. Example: <code>?id=Plot1_map&yaw=45&hfov=90&autorotate=2</code></p>`
+        ? `<h2>Available 360 photos</h2>
+           <p>Click to open. In Experience Builder, set your Embed URL to <code>?id={pano_id}</code> and store values like <code>360_100514</code> in your field.</p>
+           <ul>${ids.map(id => {
+             const t = manifest[id].title ? ` — ${manifest[id].title}` : '';
+             return `<li><a href="?id=${encodeURIComponent(id)}">${id}</a>${t}</li>`;
+           }).join('')}</ul>
+           <p class="hint">Overrides: <code>pitch</code>, <code>yaw</code>, <code>hfov</code>, <code>autorotate</code>, <code>autoLoad</code>, <code>compass</code>.<br/>
+           Example: <code>?id=360_100514&yaw=45&hfov=90&autorotate=2</code></p>`
         : '<h2>No entries in manifest.json</h2><p>Add items and reload.</p>';
     }
 
     async function main() {
       try {
         const id = qs('id');
-        const srcParam = qs('src');
+        const srcParam = qs('src'); // Option to pass a direct URL
 
         if (!id && !srcParam) {
           const manifest = await loadManifest();
@@ -133,33 +119,21 @@
           return;
         }
 
-        let panoramaUrl = null;
+        let panoUrl = null;
         let defaults = {};
-        let mode = null;
-        let item = null;
-
         if (srcParam) {
-          panoramaUrl = normalizeSrc(decodeURIComponent(srcParam));
+          panoUrl = normalizeSrc(decodeURIComponent(srcParam));
         } else {
           const manifest = await loadManifest();
-          item = manifest[id];
+          const item = manifest[id];
           if (!item) { showOverlay(`ID not found in manifest: ${id}`); return; }
-          panoramaUrl = normalizeSrc(item.src || item.url);
+          panoUrl = normalizeSrc(item.src || item.url);
           defaults = { yaw: item.yaw, pitch: item.pitch, hfov: item.hfov, autorotate: item.autorotate };
-          mode = item.mode || null;
         }
 
-        if (!panoramaUrl) { showOverlay('No image URL found.'); return; }
+        if (!panoUrl) { showOverlay('No panorama URL found.'); return; }
 
-        // If explicitly marked as flat, render as plain image
-        if (!srcParam && item && mode === 'flat') {
-          renderFlatImage(panoramaUrl);
-          hideOverlay();
-          return;
-        }
-
-        // Otherwise try to treat as a 360 pano
-        const cfg = buildPannellumConfig(panoramaUrl, defaults);
+        const cfg = buildViewerConfig(panoUrl, defaults);
         const autorotate = qs('autorotate', (typeof defaults.autorotate !== 'undefined') ? String(defaults.autorotate) : null);
         startViewer(cfg, autorotate);
         hideOverlay();
