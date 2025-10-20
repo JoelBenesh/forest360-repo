@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pano Viewer</title>
+
+  <!-- Pannellum (used for true 360 equirectangular images) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; }
+    #panorama { width: 100%; height: 100%; pointer-events: auto; touch-action: manipulation; }
+    #overlay {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+      color: #ddd; font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: rgba(0,0,0,0.75); text-align: center; padding: 24px;
+    }
+    #list {
+      position: absolute; inset: 0; overflow: auto; display: none; background: #111; color: #eee; padding: 16px 20px;
+      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #list a { color: #7cc6ff; text-decoration: none; }
+    #list a:hover { text-decoration: underline; }
+    .hint { opacity: 0.8; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="panorama"></div>
+  <div id="overlay"></div>
+  <div id="list"></div>
+
+  <script>
+    const manifestUrl = 'manifest.json';
+
+    // Query helpers
+    const Q = new URLSearchParams(location.search);
+    const qs = (k, d=null) => Q.has(k) ? Q.get(k) : d;
+    const num = (k, d) => (Q.has(k) && Number.isFinite(Number(Q.get(k)))) ? Number(Q.get(k)) : d;
+
+    // Convert Dropbox share links to direct raw URLs for embedding
+    function toDropboxRaw(url) {
+      try {
+        const u = new URL(url);
+        if (!/dropbox\.com$/.test(u.hostname)) return url;
+        u.searchParams.delete('dl');
+        u.searchParams.set('raw', '1');
+        u.hostname = 'dl.dropboxusercontent.com';
+        return u.toString();
+      } catch {
+        return url;
+      }
+    }
+    function normalizeSrc(src) {
+      if (!src) return src;
+      if (src.includes('dropbox.com')) return toDropboxRaw(src);
+      return src;
+    }
+
+    function showOverlay(msg) {
+      const el = document.getElementById('overlay');
+      el.textContent = msg;
+      el.style.display = 'flex';
+    }
+    function hideOverlay() {
+      document.getElementById('overlay').style.display = 'none';
+    }
+
+    async function loadManifest() {
+      const res = await fetch(manifestUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Manifest fetch failed');
+      return res.json();
+    }
+
+    // Flat image renderer for non-360 assets
+    function renderFlatImage(src) {
+      const pano = document.getElementById('panorama');
+      pano.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = 'Image';
+      img.style.maxWidth = '100%';
+      img.style.maxHeight = '100%';
+      img.style.objectFit = 'contain';
+      img.style.display = 'block';
+      img.style.margin = '0 auto';
+      pano.appendChild(img);
+    }
+
+    function buildPannellumConfig(src, defaults = {}) {
+      return {
+        type: 'equirectangular',
+        panorama: src,
+        autoLoad: qs('autoLoad', 'true') !== 'false',
+        showZoomCtrl: qs('zoomCtrl', 'true') !== 'false',
+        showFullscreenCtrl: qs('fullscreenCtrl', 'true') !== 'false',
+        compass: qs('compass', 'false') === 'true',
+        pitch: num('pitch', defaults.pitch ?? 0),
+        yaw: num('yaw', defaults.yaw ?? 0),
+        hfov: num('hfov', defaults.hfov ?? 100)
+      };
+    }
+
+    function startViewer(cfg, autorotate) {
+      const viewer = pannellum.viewer('panorama', cfg);
+      if (autorotate !== null && autorotate !== undefined && autorotate !== '' && !Number.isNaN(Number(autorotate)) && Number(autorotate) !== 0) {
+        viewer.startAutoRotate(Number(autorotate));
+      }
+      return viewer;
+    }
+
+    function showList(manifest) {
+      const list = document.getElementById('list');
+      list.style.display = 'block';
+      const ids = Object.keys(manifest).sort();
+      list.innerHTML = ids.length
+        ? `<h2>Available items</h2>
+           <p>Click an entry to open it. Embed with <code>?id=Plot1_map</code> in Experience Builder.</p>
+           <ul>${ids.map(id => `<li><a href="?id=${encodeURIComponent(id)}">${id}</a></li>`).join('')}</ul>
+           <p class="hint">Overrides: <code>pitch</code>, <code>yaw</code>, <code>hfov</code>, <code>autorotate</code>, <code>autoLoad</code>. Example: <code>?id=Plot1_map&yaw=45&hfov=90&autorotate=2</code></p>`
+        : '<h2>No entries in manifest.json</h2><p>Add items and reload.</p>';
+    }
+
+    async function main() {
+      try {
+        const id = qs('id');
+        const srcParam = qs('src');
+
+        if (!id && !srcParam) {
+          const manifest = await loadManifest();
+          showList(manifest);
+          return;
+        }
+
+        let panoramaUrl = null;
+        let defaults = {};
+        let mode = null;
+        let item = null;
+
+        if (srcParam) {
+          panoramaUrl = normalizeSrc(decodeURIComponent(srcParam));
+        } else {
+          const manifest = await loadManifest();
+          item = manifest[id];
+          if (!item) { showOverlay(`ID not found in manifest: ${id}`); return; }
+          panoramaUrl = normalizeSrc(item.src || item.url);
+          defaults = { yaw: item.yaw, pitch: item.pitch, hfov: item.hfov, autorotate: item.autorotate };
+          mode = item.mode || null;
+        }
+
+        if (!panoramaUrl) { showOverlay('No image URL found.'); return; }
+
+        // If explicitly marked as flat, render as plain image
+        if (!srcParam && item && mode === 'flat') {
+          renderFlatImage(panoramaUrl);
+          hideOverlay();
+          return;
+        }
+
+        // Otherwise try to treat as a 360 pano
+        const cfg = buildPannellumConfig(panoramaUrl, defaults);
+        const autorotate = qs('autorotate', (typeof defaults.autorotate !== 'undefined') ? String(defaults.autorotate) : null);
+        startViewer(cfg, autorotate);
+        hideOverlay();
+      } catch (err) {
+        console.error(err);
+        showOverlay('There was an error loading the viewer. Check console for details.');
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
